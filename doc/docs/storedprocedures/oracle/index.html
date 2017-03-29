@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="ISO-8859-1"?> <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" 
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"> 
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en-US" lang="en-US">
+<head> 
+<title>About Relational.OWL Stored Procedures for Oracle 10g 10.2</title>
+</head> <body>
+
+<h2>About: <a href="http://www.sourceforge.net/projects/Relational-OWL/">Relational.OWL
+Stored Procedures for Oracle 10g 10.2</a></h2>
+
+
+<div style="text-align:left;margin-bottom:10px;"> 
+<a href="#introduction"><b>Introduction: What is Relational.OWL?</b></a><br /> 
+Short introduction to what Relational.OWL is and what it does. </div> 
+<div style="text-align:left;margin-bottom:10px;"> 
+<a href="#functionality"><b>Functionality</b></a><br /> 
+Introduces the implementation and functionality of Relational.OWL using XSLT/XQuery. </div>
+
+<div style="text-align:left;margin-bottom:10px;"> <a
+href="#implement"><b>Installation and Usage</b></a><br /> 
+Explains how to install and use the stored procedures on an Oracle 10g database.</div>
+
+<div style="text-align:left;margin-bottom:10px;"> <a
+href="#acknowledgements"><b>Acknowledgements</b></a><br /> </div>
+
+
+<div style="text-align:left;margin-bottom:10px;"> <a
+href="#references"><b>References</b></a><br /> </div>
+
+<div style="align:left"><hr/></div>
+
+<h3><a name="disclaimer">Disclaimer</a></h3> <div
+style="text-align:left;margin-bottom:10px;font-style:italic;"> This
+is a preliminary implementation of Relational.OWL using XSLT and XQuery, 
+realizing most of the basic functionality. Since this version of the package could still be a little
+buggy, it comes without any warranty. </div>
+
+<div style="align:left"><hr/></div>
+
+<h3><a name="introduction">Introduction: What is Relational.OWL?</a></h3> <div
+style="text-align:left;margin-left:20px;margin-bottom:10px;">
+Relational.OWL is a Semantic Web-based representation format for
+relational data and schema components, which is particularly
+appropriate for exchanging items among remote database systems or to
+expose relational data on the Semantic Web. OWL, originally created
+for the Semantic Web enables us to represent not only the relational
+data itself, but also a part of its <i>interpretation</i>, i.e.
+knowledge about its format, its origin, its usage, or its original
+embedment in specific frameworks. </div>
+
+<div style="text-align:left;margin-left:20px;margin-bottom:10px;">
+To describe the schema of a relational database with the techniques
+provided by RDF and OWL, we have defined reference OWL classes
+centrally, to which any document describing such a database can
+refer. The abstract representation of classes like <i>Table</i> or
+<i>Column</i> become a central part of the knowledge representation
+process realized within Relational.OWL. Additionally, we have
+specified possible relationships among these classes resulting in an
+ontology, a relational database can easily be described with. We
+call this central representation of abstract schema components and
+relationships the <i>Relational.OWL Ontology</i>.<br /> <div
+align="center"><img src="http://www.dbs.cs.uni-duesseldorf.de/RDF/pics/ROWL.jpg" alt="Relational.OWL
+Ontology" /><br/><b><i>The Relational.OWL Ontology</i></b></div>
+</div>
+
+<h3><a name="functionality">Functionality</a></h3>
+<div style="text-align:left;margin-left:20px;margin-bottom:10px;">
+The first step in representing the database is the extraction of data and schema information
+as raw XML documents. This is done by the functions <i>DATA_AS_RAW_XML()</i> and
+<i>METADATA_AS_RAW_XML()</i>, respectively. These functions are invoked by the functions
+which provide the actual representation, they are not meant to be invoked manually.
+The transformation from raw data into Relational.OWL can either be done
+using XQuery (<i>DATA_AS_OWL()/METADATA_AS_OWL()</i>) or using XSLT
+(<i>DATA_AS_OWL_WITH_XSLT()/METADATA_AS_OWL_WITH_XSLT()</i>). The transformation
+method does not affect the result of the extraction. However, XSLT turned out
+to be a lot faster than XQuery. </div>
+
+<div style="text-align:left;margin-left:20px;margin-bottom:10px;">
+All of these functions return an XMLType document, which is the type used by the Oracle
+database systemto handle XML documents. Such a documentmay be processed by other
+functions and procedures, or it may be stored in the database.
+If actual XML files need to be generated, the procedures <i>EXTRACT_DATA_INTO_FILE()</i>
+and <i>EXTRACT_METADATA_INTO_FILE()</i> may be used in order to write the result of the
+extraction into files outside the database system. They rely on the functions mentioned
+above and provide an user interface to easily access the schema and data representation.
+All functions and procedures are written in PL/SQL, and they have been implemented
+and tested on Oracle 10g Releases 10.2.0.1.0 and 10.2.0.2.0. However, there is no warranty
+that this package will work on these database systems in all cases. It is highly improbable
+that the said package will run on any release earlier than Oracle 10g Release 1.</div>
+
+
+<h3><a name="implement">Installation and Usage</a></h3> 
+<div style="text-align:left;margin-left:20px;margin-bottom:10px;">
+The functions and procedures of this package may be entered into the database by simply
+invoking the given SQL-DDL statements (<i>CREATE OR REPLACE FUNCTION ...</i>),
+e.g. by using the SQL command line. It is strongly recommended that this is done by
+a database administrator. Other users would need <i>CREATE ANY PROCEDURE</i> authorization.
+In order to invoke any of the functions/procedures, <i>EXECUTE ANY PROCEDURE</i>
+authorization is required.</div>
+
+
+<h4>Schema export</h4> 
+<div style="text-align:left;margin-left:20px;margin-bottom:10px;">
+The functions <i>METADATA_AS_OWL()</i> and <i>METADATA_AS_OWL_WITH_XSLT()</i> expect
+the name of the database as first argument. The second argument allows the user to specify
+the name of a table which shall be extracted. If no second argument is given, the
+whole schema will be extracted. As mentioned before, the return value is a document of
+XMLType.
+</div>
+<div style="text-align:left;margin-left:20px;margin-bottom:10px;">
+The procedure <i>EXTRACT_METADATA_INTO_FILE()</i> expects five arguments: The database
+name, a directory name, a file name, a boolean value and a table name (which,
+as above, is optional). The directory and file name specify the location and name
+of the file which is to be created. The boolean value specifies whether XSLT should
+be used (true) or not (false). Note that the directory must be known to the database
+system, which means it must have been declared using an SQL statement such as
+<i>CREATE DIRECTORY</i> name AS ’path’.
+</div>
+
+<div style="text-align:left;margin-left:20px;margin-bottom:10px;">
+An execution of this procedure from the command line might look like this:<br />
+
+<i>exec EXTRACT_METADATA_INTO_FILE(’MYDB’,’DIR’,’schema.owl’,false,’COUNTRY’);</i>
+</div>
+
+<h4>Data export</h4> 
+<div style="text-align:left;margin-left:20px;margin-bottom:10px;">
+The functions <i>DATA_AS_OWL()</i> and <i>DATA_AS_OWL_WITH_XSLT()</i> expect an URL as
+first argument which specifies the location of the corresponding schema document. As
+above, the optional second argument allows to extract only a specific table. The return
+value is of XMLType.</div>
+<div style="text-align:left;margin-left:20px;margin-bottom:10px;">
+The procedure <i>EXTRACT_DATA_INTO_FILE()</i> expects five arguments: The URL of the
+schema document, a directory name, a file name, a boolean value and an optional table
+name. It basically works like the corresponding procedure for metadata extraction.
+</div>
+<div style="text-align:left;margin-left:20px;margin-bottom:10px;">
+A sample execution:<br />
+
+<i>exec EXTRACT_DATA_INTO_FILE(’c:\schema.owl’,’DIR’,’data.owl’,true);</i>
+</div>
+
+<h3><a name="acknowledgements">Acknowledgements</a></h3> 
+<div style="text-align:left;margin-left:20px;"> 
+The stored procedures described here were implemented by Michael Matuschek
+at the Heinrich-Heine-Universit&auml;t D&uuml;sseldorf.
+</div>
+
+<h3><a name="references">References</a></h3> 
+<div style="text-align:left;margin-left:20px;"> 
+<ul> 
+<li><b>Relational.OWL - A Data and Schema Representation Format Based on OWL</b>; Cristian
+P&eacute;rez de Laborda and Stefan Conrad;Conceptual Modelling 2005,
+Second Asia-Pacific Conference on Conceptual Modelling (APCCM2005);
+pp 89-96</li> 
+<li><b>Semantic Web Activities at the Databases and Information Systems Group Düsseldorf</b> - <a
+href="http://www.dbs.cs.uni-duesseldorf.de/RDF/">http://www.dbs.cs.uni-duesseldorf.de/RDF/</a></li>
+</ul></div>
+
+
+</body> </html>

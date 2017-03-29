@@ -1,0 +1,12 @@
+de.hhu.cs.dbs
+de.hhu.cs.dbs.db2
+de.hhu.cs.dbs.db2.impl
+de.hhu.cs.dbs.db2.interfaces
+de.hhu.cs.dbs.exceptions
+de.hhu.cs.dbs.impl
+de.hhu.cs.dbs.interfaces
+de.hhu.cs.dbs.interfaces.constants
+de.hhu.cs.dbs.mysql
+de.hhu.cs.dbs.mysql.impl
+de.hhu.cs.dbs.mysql.interfaces
+de.hhu.cs.dbs.tasks

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project default="javadoc">
+<target name="javadoc">
+<javadoc access="public" author="true" classpath="lib/xercesImpl.jar;lib/db2jcc.jar;lib/commons-logging.jar;lib/concurrent.jar;lib/db2jcc_license_cu.jar;lib/junit.jar;lib/log4j-1.2.7.jar;lib/db2jcc_license_cisuz.jar;lib/xml-apis.jar;lib/jakarta-oro-2.0.5.jar;lib/mysql-connector-java-3.1.10-bin.jar;lib/antlr.jar;lib/jena.jar;lib/icu4j.jar;lib/jdom.jar" destdir="doc" nodeprecated="false" nodeprecatedlist="false" noindex="false" nonavbar="false" notree="false" packagenames="dbs.mysql.impl,dbs.db2.impl,dbs.impl,dbs.exceptions,dbs.db2,dbs.mysql.interfaces,dbs,dbs.interfaces,dbs.mysql,dbs.db2.interfaces,dbs.interfaces.constants" source="1.5" sourcepath="." splitindex="true" use="true" version="true"/>
+</target>
+</project>

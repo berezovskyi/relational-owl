@@ -1,0 +1,8 @@
+connections.properties
+.project
+.cvsignore
+.classpath
+build
+lib
+rdbms.properties
+*.fatjar

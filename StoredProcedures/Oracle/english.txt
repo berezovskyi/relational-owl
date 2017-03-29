@@ -1,0 +1,813 @@
+CREATE OR REPLACE FUNCTION METADATA_AS_RAW_XML
+( 
+-- table to be returned. If no argument is given, the default value is used
+table_name  STRING DEFAULT 'RETURN_ALL_TABLES'
+)         
+-- return value is an XMLType document
+RETURN XMLType                
+AS          
+-- handle for metadata export
+handle NUMBER;            
+-- handle for metadata transformation
+transform_handle NUMBER;   
+-- temporary CLOB
+temp_clob CLOB;   
+-- CLOB for final document
+final_clob CLOB;  
+BEGIN          
+-- we want metadata from tables
+handle := DBMS_METADATA.OPEN('TABLE');        
+-- we want XML data (not DDL)
+transform_handle := DBMS_METADATA.ADD_TRANSFORM(handle,'MODIFY'); 
+-- if not all tables are required...
+if table_name != 'RETURN_ALL_TABLES'      
+ -- ...filter by name
+ then DBMS_METADATA.SET_FILTER(handle,'NAME', table_name);  
+end if;      
+LOOP                        
+ -- fetch table information
+ temp_clob:=DBMS_METADATA.FETCH_CLOB(handle); 
+-- loop ends when all information is fetched
+EXIT WHEN temp_clob IS NULL;      
+ -- append fetched data to existing CLOB
+ final_clob:=final_clob||temp_clob;   
+END LOOP;      
+-- close handle
+DBMS_METADATA.CLOSE(handle);   
+-- add <DATABASE> tag
+final_clob:='<DATABASE>'||final_clob||'</DATABASE>';  
+-- construct and return final document
+return XMLType(final_clob); 
+end;
+
+
+----------------------------------------------------------------------------------------------------
+
+
+CREATE OR REPLACE FUNCTION DATA_AS_RAW_XML
+(    
+-- table to be returned. If no argument is given, the default value is used
+table_name  STRING DEFAULT 'RETURN_ALL_TABLES'
+)                                                    
+-- return value is an XMLType document
+RETURN XMLType                                       
+AS 
+-- loop variable for cursor
+temp_table_name varchar(255);                        
+-- temporary CLOB  
+temp_clob CLOB;                                    
+-- CLOB for final document
+final_clob CLOB;                                   
+-- CLOB for SQL query result
+query_result CLOB;                                   
+-- cursor for iteration over all table names
+CURSOR name_cursor IS select table_name from tabs;   
+begin    
+-- if the whole database is required...
+if table_name='RETURN_ALL_TABLES'                     
+ then   
+ -- open predefined cursor
+ OPEN name_cursor;                                  
+ LOOP                                               
+  -- extract table name
+  FETCH name_cursor INTO temp_table_name;        
+  -- loop ends when all names are extracted
+ EXIT WHEN name_cursor%NOTFOUND;                    
+  -- extract XML document
+  query_result:=DBMS_XMLQuery.getXML('select * from '||temp_table_name);  
+  -- append query result to existing CLOB
+  -- and add <TABLE> tag 
+  temp_clob:=temp_clob||                     
+  '<TABLE name="'||temp_table_name||'">'||       
+  query_result||  
+  '</TABLE>';    
+ END LOOP;                                           
+ -- close cursor
+ CLOSE name_cursor;                                  
+ -- if only a specific table is required...
+ else                                                
+ -- extract XML document
+ query_result:=DBMS_XMLQuery.getXML('select * from '||table_name);  
+ -- add <TABLE> tag
+ temp_clob:=temp_clob||                         
+ '<TABLE name="'||table_name||'">'||    
+ query_result||  
+ '</TABLE>';    
+end if;  
+-- delete redundant processing instructions
+temp_clob:=replace(temp_clob,'<?xml version = ''1.0''?>');  
+-- add <DATABASE> tag
+final_clob:='<DATABASE>'||temp_clob||'</DATABASE>';         
+-- construct and return final document
+return XMLType(final_clob);                                   
+END;
+
+
+----------------------------------------------------------------------------------------------------
+
+
+CREATE OR REPLACE FUNCTION METADATA_AS_OWL
+(      
+-- database name
+database_name STRING,      
+-- table to be returned. If no argument is given, the default value is used
+table_name STRING DEFAULT 'RETURN_ALL_TABLES'   
+)              
+-- return value is an XMLType document
+RETURN XMLType           
+AS               
+-- variable for final document
+return_doc XMLType;    
+-- variable for raw data
+meta_data_doc  XMLType;    
+-- variable for embedding database name
+dbname_doc  XMLType;   
+BEGIN          
+-- extract raw data
+meta_data_doc:=METADATA_AS_RAW_XML(table_name);   
+-- embed database name
+dbname_doc:=XMLType('<dbname value="'||database_name||'"/>');    
+-- start of XQuery statement
+SELECT          
+XMLQuery(          
+' 
+(:root element including namespaces:) 
+<rdf:RDF 
+xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"  
+xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#" 
+xmlns:owl="http://www.w3.org/2002/07/owl#" 
+xmlns:xsd="http://www.w3.org/2001/XMLSchema#" 
+xmlns:dbs="http://www.dbs.cs.uni-duesseldorf.de/RDF/relational.owl#" 
+>        
+(:database description:) 
+<owl:Class rdf:ID="{data($dbn_doc/dbname/@value)}">   
+{ 
+(:resource type:) 
+<rdf:type rdf:resource="http://www.dbs.cs.uni-duesseldorf.de/RDF/relational.owl#Database"/>,  
+(:for each table name...:) 
+for $tab_name in $md_doc/DATABASE/ROWSET/ROW/TABLE_T/SCHEMA_OBJ/NAME       
+return  
+ (:...add corresponding "hasTable"-property:) 
+ <dbs:hasTable rdf:resource="{concat("#",data($tab_name))}" />      
+} 
+</owl:Class> 
+{ 
+(:for each table...:) 
+for $table in $md_doc/DATABASE/ROWSET/ROW/TABLE_T      
+return  
+ (:...create corresponding description:) 
+ <owl:Class rdf:ID="{data($table/SCHEMA_OBJ/NAME)}">  
+ (:resource type:) 
+ <rdf:type rdf:resource="http://www.dbs.cs.uni-duesseldorf.de/RDF/relational.owl#Table"/>  
+ { 
+ (:for each column of this table...:) 
+ for $col_name in $table/COL_LIST/COL_LIST_ITEM/NAME    
+ return 
+  (:...add corresponding "hasColumn" property:) 
+  <dbs:hasColumn rdf:resource= 
+  "{concat(concat(concat("#",data($table/SCHEMA_OBJ/NAME)),"."),data($col_name))}"/>  
+ } 
+ { 
+ (:if the table has a primary key...:) 
+ if ($table/CON1_LIST/CON1_LIST_ITEM[CONTYPE="2"])  
+  then              
+  (:...add corresponding tags:) 
+  <dbs:isIdentifiedBy>              
+   <dbs:PrimaryKey> 
+   { 
+   (:for all columns of this primary key...:) 
+   for $pkey_col_name in $table/CON1_LIST/CON1_LIST_ITEM[CONTYPE="2"]/COL_LIST/COL_LIST_ITEM/COL/NAME  
+   return  
+      (:...add corresponding "hasColumn" property:)
+    <dbs:hasColumn rdf:resource= 
+    "{concat(concat(concat("#",data($table/SCHEMA_OBJ/NAME)),"."),data($pkey_col_name))}"/> 
+   } 
+   </dbs:PrimaryKey> 
+  </dbs:isIdentifiedBy> 
+  else "" 
+ } 
+</owl:Class> 
+}     
+{      
+(:for each column of each table...:) 
+for $table in $md_doc/DATABASE/ROWSET/ROW/TABLE_T  
+ for $column in $table/COL_LIST/COL_LIST_ITEM 
+ return 
+ (:...create corresponding description:) 
+  <owl:DatatypeProperty rdf:ID="{concat(concat(data($table/SCHEMA_OBJ/NAME),"."),data($column/NAME))}">    
+  (:resource type:) 
+  <rdf:type rdf:resource="http://www.dbs.cs.uni-duesseldorf.de/RDF/relational.owl#Column"/> 
+  (:"domain" is the current table:) 
+  <rdfs:domain rdf:resource="{concat("#",data($table/SCHEMA_OBJ/NAME))}"/>  
+  { 
+  (:data type processing:) 
+  (:if we have a string...:) 
+  if($column[TYPE_NUM="1"] or $column[TYPE_NUM="96"])  
+   then <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>  
+   (:if we have a date...:) 
+   else if ($column[TYPE_NUM="12"])                  
+           then <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#date"/> 
+           (:if we have a decimal number..:) 
+           else if($column[TYPE_NUM="2"] and $column/SCALE and $column/PRECISION_NUM)  
+                   then <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#decimal"/> 
+                   (:if we have an integer..:) 
+                   else if($column[TYPE_NUM="2"] and $column/SCALE)    
+                           then <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#integer"/> 
+                           (:if we have a float number...:) 
+                           else if($column[TYPE_NUM="2"] and $column/PRECISION_NUM)  
+                                  then <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#float"/> 
+                                  (:if we have a mixed date/time value...:) 
+                                  else if($column[TYPE_NUM="180"])  
+                                          then <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#dateTime"/>  
+                                          else "" 
+  } 
+  { 
+  (:length processing:) 
+  (:if we have a string...:) 
+  if($column[TYPE_NUM="1"] or $column[TYPE_NUM="96"])  
+   (:...the length vaue can be found in the "LENGTH" element:) 
+   then <dbs:length>{data($column/LENGTH)}</dbs:length>  
+   (:if we have a float or decimal number...:) 
+   else if ($column[TYPE_NUM="2"] and $column/PRECISION_NUM)  
+            (:...the length value can be found in the "PRECISION_NUM" element :)  
+           then <dbs:length>{data($column/PRECISION_NUM)}</dbs:length>  
+           else "" 
+  } 
+  { 
+  (:scale processing for decimal numbers:) 
+  if($column[TYPE_NUM="2"] and $column/PRECISION_NUM and $column/SCALE) 
+   then <dbs:scale>{data($column/SCALE)}</dbs:scale> 
+   else "" 
+  } 
+  { 
+  (:foreign key processing:) 
+  (:iteration over all foreign keys, all columns of each foreign key and all target columns for each foreign key:)
+  (: if the name of the current column and a foreign key column match...:) 
+  (: ...and the position of this foreign key column matches a target column position...:) 
+  (: ...then the current column refers to this target column :) 
+  for $constraint in $table/CON2_LIST/CON2_LIST_ITEM[CONTYPE="4"] 
+   for $fkey_col in $constraint/SRC_COL_LIST/SRC_COL_LIST_ITEM      
+    for $target_col in $fkey_col/../../TGT_COL_LIST/TGT_COL_LIST_ITEM
+    where $column/NAME eq $fkey_col/COL/NAME and $target_col/POS_NUM eq $fkey_col/POS_NUM 
+    return  
+    <dbs:references rdf:resource= 
+    "{concat(concat(concat("#",data($fkey_col/../../SCHEMA_OBJ/NAME)),"."),data($target_col/COL/NAME))}"/> 
+  } 
+  </owl:DatatypeProperty>	 
+} 
+</rdf:RDF> 
+'          
+PASSING meta_data_doc AS "md_doc", dbname_doc AS "dbn_doc"       -- pass raw data and database name
+RETURNING CONTENT) INTO return_doc FROM DUAL;  -- provide return variable
+-- enter processing instructions and construct final document
+return_doc:=XMLType('<?xml version = "1.0" encoding = "ISO-8859-1"?>'|| 
+XMLType.getClobVal(return_doc));        
+-- return document
+return return_doc;  
+END;
+
+
+----------------------------------------------------------------------------------------------------
+
+
+
+CREATE OR REPLACE FUNCTION DATA_AS_OWL
+(   
+-- location of corresponding schema ontology
+schema_url STRING,                 
+-- table to be returned. If no argument is given, the default value is used
+table_name STRING default 'RETURN_ALL_TABLES'   
+)            
+-- return value is an XMLType document
+RETURN XMLType            
+AS            
+-- variable for final document
+return_doc XMLType;        
+-- variable for raw data
+table_data_doc XMLType;         
+begin            
+-- extract raw data
+table_data_doc:=DATA_AS_RAW_XML(table_name);  
+-- start of XQuery statement
+SELECT         
+XMLQuery(         
+'     
+(:root element including namespaces:) 
+<rdf:RDF                                                                      
+xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"       
+xmlns:dbinst="SCHEMA_PLACEHOLDER#"       
+>       
+{       
+(: iteration over all rows of all tables:)
+for $table in $data_doc/DATABASE/TABLE 
+ for $row in $table/ROWSET/*               
+ (: bind table name to variable:)           
+ let $tab_name:=$table/data(@name)    
+ (:create element name with concatenation :)
+ return 
+ element {concat("dbinst:", $tab_name)}  
+ {         
+  (: iteration over  all columns :) 
+  for $column in $row/*         
+  (:create element name with concatenation :)
+  return 
+  element{concat(concat(concat("dbinst:",$tab_name),"."),name($column))}  
+  {
+   data($column) (: element content :)         
+  } 
+ }       
+}         
+</rdf:RDF>       
+'         
+PASSING table_data_doc AS "data_doc"                  -- pass raw data
+RETURNING CONTENT) INTO return_doc FROM DUAL;     -- provide return variable
+-- insert processing instructions and schema location
+return_doc:=XMLType('<?xml version = "1.0" encoding = "ISO-8859-1"?>'||
+replace(XMLType.getClobVal(return_doc),'SCHEMA_PLACEHOLDER',schema_url));     
+-- return document
+return return_doc;         
+END;    
+
+
+----------------------------------------------------------------------------------------------------
+
+
+
+CREATE OR REPLACE FUNCTION METADATA_AS_OWL_WITH_XSLT
+(     
+-- database name
+database_name in STRING,     
+-- table to be returned. If no argument is given, the default value is used
+table_name STRING DEFAULT 'RETURN_ALL_TABLES'   
+)              
+-- return value is an XMLType document
+RETURN XMLType           
+AS            
+-- variable for final document
+return_doc XMLType;   
+-- variable for raw data
+meta_data_doc  XMLType; 
+-- variable for stylesheet
+XSLT_doc XMLType;   
+BEGIN             
+-- extract raw data
+meta_data_doc:=METADATA_AS_RAW_XML(table_name);
+-- create stylesheet
+XSLT_doc:=XMLType(                        
+'     
+<!--start of stylesheet-->
+<xsl:stylesheet version="1.0"                       
+xmlns:xsl="http://www.w3.org/1999/XSL/Transform"     
+>
+<!--parameter for database name-->                      
+<xsl:param name="DBNAME"/>                                   
+<!--<DATABASE> element serves as "entrance" -->                      
+<xsl:template match="/DATABASE">    
+<!--root element including namespaces-->
+<rdf:RDF           
+xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"     
+xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"     
+xmlns:owl="http://www.w3.org/2002/07/owl#"     
+xmlns:xsd="http://www.w3.org/2001/XMLSchema#"     
+xmlns:dbs="http://www.dbs.cs.uni-duesseldorf.de/RDF/relational.owl#"      
+>                  
+<!--database description -->                                      
+<owl:Class rdf:ID="{$DBNAME}">   
+<!-- resource type -->
+<rdf:type rdf:resource="http://www.dbs.cs.uni-duesseldorf.de/RDF/relational.owl#Database" />   
+<!--for each table name... -->  
+<xsl:for-each select="ROWSET/ROW/TABLE_T/SCHEMA_OBJ/NAME"> 
+ <!-- ...add the corresponding "hasTable" property-->
+ <dbs:hasTable rdf:resource="#{.}" />      
+</xsl:for-each>   
+</owl:Class>   
+<!--for each table...  -->
+<xsl:for-each select="ROWSET/ROW/TABLE_T">   
+ <!--...create corresponding description -->
+ <owl:Class rdf:ID="{SCHEMA_OBJ/NAME}">           
+ <!--resource type-->
+ <rdf:type rdf:resource="http://www.dbs.cs.uni-duesseldorf.de/RDF/relational.owl#Table"/> 
+ <!-- for each column...-->
+ <xsl:for-each select="COL_LIST/COL_LIST_ITEM/NAME">   
+  <!-- ...add corresponding "hasColumn" property-->
+  <dbs:hasColumn rdf:resource="#{../../../SCHEMA_OBJ/NAME}{.{.}"/>  
+ </xsl:for-each>   
+ <!-- if the table has a primary key...-->
+ <xsl:if  test ="CON1_LIST/CON1_LIST_ITEM/CONTYPE=2">  
+  <!--add corresponding tags-->
+  <dbs:isIdentifiedBy>									
+   <dbs:PrimaryKey>	  
+    <!--for each primary key column...-->       
+    <xsl:for-each select="CON1_LIST/CON1_LIST_ITEM[CONTYPE=2]/COL_LIST/COL_LIST_ITEM/COL/NAME"> 
+     <!-- ...add corresponding "hasColumn" property-->
+     <dbs:hasColumn rdf:resource="#{../../../../../../SCHEMA_OBJ/NAME}{.{.}"/>
+    </xsl:for-each>   
+   </dbs:PrimaryKey>					  
+  </dbs:isIdentifiedBy>						  
+ </xsl:if>  
+ </owl:Class>   
+</xsl:for-each>   
+<!--for each table...-->
+<xsl:for-each select="ROWSET/ROW/TABLE_T">    
+ <!--for each column of this table....-->
+ <xsl:for-each select="COL_LIST/COL_LIST_ITEM">  
+  <!--...create corresponding description -->				   
+  <owl:DatatypeProperty rdf:ID="{../../SCHEMA_OBJ/NAME}{.{NAME}">
+  <!--resource type-->
+  <rdf:type rdf:resource="http://www.dbs.cs.uni-duesseldorf.de/RDF/relational.owl#Column"/>  
+  <!--"domain" is the current table-->  
+  <rdfs:domain rdf:resource="#{../../SCHEMA_OBJ/NAME}"/>  
+  <!--data type processing-->
+  <xsl:choose>  
+   <!-- if we have a string...-->
+   <xsl:when test="TYPE_NUM=1 or TYPE_NUM=96">  
+    <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>  
+   </xsl:when>  
+   <!-- if we have a date...-->
+   <xsl:when test="TYPE_NUM=12">  
+    <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#date"/>  
+   </xsl:when>  
+   <!-- if we have a decimal number...-->
+   <xsl:when test="TYPE_NUM=2 and SCALE and PRECISION_NUM">  
+    <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#decimal"/>  
+   </xsl:when>  
+   <!-- if we have an integer...-->
+   <xsl:when test="TYPE_NUM=2 and SCALE">  
+    <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#integer"/>    
+   </xsl:when>  
+   <!-- if we have a float number...-->
+   <xsl:when test="TYPE_NUM=2 and PRECISION_NUM">  
+    <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#float"/>  
+   </xsl:when>  
+   <!-- if we have a mixed date/time value..-->
+   <xsl:when test="TYPE_NUM=180">  
+    <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#dateTime"/>  
+   </xsl:when>  
+  <!-- end of data type processing--> 
+  </xsl:choose>	
+  <!-- length processing-->
+  <xsl:choose>  
+   <!-- if we have a string...-->
+   <xsl:when test="TYPE_NUM=1 or TYPE_NUM=96">  
+    <!--...the length vaue can be found in the "LENGTH" element-->
+    <dbs:length>
+     <xsl:value-of select="LENGTH"/>
+    </dbs:length>  
+   </xsl:when>  
+   <!-- if we have a float or decimal number...-->
+   <xsl:when test="TYPE_NUM=2 and PRECISION_NUM">  
+    <!--...the length value can be found in the "PRECISION_NUM" element -->
+    <dbs:length>
+     <xsl:value-of select="PRECISION_NUM"/>
+    </dbs:length>  
+   </xsl:when>  
+  <!-- end of length processing-->	   
+  </xsl:choose>	
+  <!-- scale processing for decimal numbers-->
+  <xsl:if test="TYPE_NUM=2 and PRECISION_NUM and SCALE">  
+   <!-- value is stored in the "SCALE" element-->
+   <dbs:scale>
+    <xsl:value-of select="SCALE"/>
+   </dbs:scale>     
+  </xsl:if>    
+  <!--foreign key processing-->
+  <!--bind current column to variable-->
+  <xsl:variable  name = "column"  select ="."/>  
+   <!--iteration over all foreign keys -->   
+  <xsl:for-each select="../../CON2_LIST/CON2_LIST_ITEM[CONTYPE=4]">    
+   <!--iteration over all columns of this foreign key -->
+   <xsl:for-each select="SRC_COL_LIST/SRC_COL_LIST_ITEM">    
+    <!--bind current column to variable -->
+    <xsl:variable  name = "fkey_col"  select ="."/>  
+    <!--iteration over all target columns-->   
+    <xsl:for-each select="../../TGT_COL_LIST/TGT_COL_LIST_ITEM"> 
+     <!--bind target column to variable-->
+     <xsl:variable  name = "target_col"  select ="."/>  
+     <!-- if the name of the current column and a foreign key column match...-->
+     <!-- ...and the position of this foreign key column matches a target column position...-->
+     <!-- ...then the current column refers to this target column -->
+     <xsl:if test="$column/NAME=$fkey_col/COL/NAME and $target_col/POS_NUM=$fkey_col/POS_NUM">  
+      <dbs:references rdf:resource="#{$fkey_col/../../SCHEMA_OBJ/NAME}{.{$target_col/COL/NAME}"/>  		    
+     </xsl:if>  
+    <!--end iteration over target columns--> 
+    </xsl:for-each> 
+   <!--end iteration over foreign key columns-->  
+   </xsl:for-each> 
+  <!--end iteration over foreign keys-->  
+  </xsl:for-each>  
+  </owl:DatatypeProperty>	     
+ <!--end iteration over columns--> 
+ </xsl:for-each> 
+<!-- end iteration over tables-->  
+</xsl:for-each>  
+</rdf:RDF>     
+</xsl:template>     
+</xsl:stylesheet>     
+'     
+);      
+-- apply stylesheet and provide database name
+return_doc:=meta_data_doc.transform(XSLT_doc,'DBNAME=""'||database_name||'""');  
+-- enter processing instructions and construct document
+return_doc:=XMLType('<?xml version = "1.0" encoding="ISO-8859-1"?>'||
+XMLType.getClobVal(return_doc));              
+-- return document
+return return_doc; 
+END;
+
+
+
+----------------------------------------------------------------------------------------------------
+
+
+
+CREATE OR REPLACE FUNCTION DATA_AS_OWL_WITH_XSLT
+(
+-- location of corresponding schema ontology
+schema_url STRING, 
+-- table to be returned. If no argument is given, the default value is used
+table_name STRING default 'RETURN_ALL_TABLES'   
+)             
+-- return value is an XMLType document
+RETURN XMLType            
+AS             
+-- variable for final document 
+return_doc XMLType;      
+-- variable for stylesheet   
+XSLT_doc XMLType;        
+-- variable for raw data
+table_data_doc XMLType;         
+BEGIN             
+-- extract raw data
+table_data_doc:=DATA_AS_RAW_XML(table_name);  
+-- create stylesheet
+XSLT_doc:=XMLType(     
+'   
+<!-- start of stylesheet --> 
+<xsl:stylesheet version="1.0"       
+xmlns:xsl="http://www.w3.org/1999/XSL/Transform"   
+ >  
+<!--<DATABASE> element serves as "entrance" -->  
+<xsl:template match="/DATABASE"> 
+<!-- root element with namespaces --> 
+<rdf:RDF xmlns:dbinst="SCHEMA_PLACEHOLDER" xmlns:rdf ="http://www.w3.org/1999/02/22-rdf-syntax-ns#">  
+<!-- iteration over all tables -->
+<xsl:for-each select="TABLE/ROWSET">   
+ <!-- iteration over all rows --> 
+ <xsl:for-each select="ROW">   
+  <!-- construct element name --> 
+  <xsl:element name="dbinst:{../../@name}"  namespace="SCHEMA_PLACEHOLDER">  
+   <!-- iteration over all columns--> 
+   <xsl:for-each select="*">  
+    <!-- construct element name --> 
+    <xsl:element name="dbinst:{../../../@name}{.{name(.)}" namespace="SCHEMA_PLACEHOLDER">  
+     <!-- element content is content of the current column --> 
+     <xsl:value-of select="."/> 
+    </xsl:element>  
+   <!-- end of iteration over columns -->   
+   </xsl:for-each>  
+  </xsl:element>  
+ <!-- end of iteration over rows -->   
+ </xsl:for-each> 
+<!-- end of iteration over tables -->   
+</xsl:for-each>  
+</rdf:RDF>   
+</xsl:template>   
+</xsl:stylesheet>   
+'   
+);    
+-- apply stylesheet
+return_doc:=table_data_doc.transform(XSLT_doc);        
+-- insert processing instructions and schema location
+return_doc:=XMLType('<?xml version = "1.0" encoding = "ISO-8859-1"?>'||
+replace(XMLType.getClobVal(return_doc),'SCHEMA_PLACEHOLDER',schema_url));       
+-- return document
+return return_doc;             
+END;  
+
+
+
+----------------------------------------------------------------------------------------------------
+
+
+
+CREATE OR REPLACE PROCEDURE EXTRACT_METADATA_INTO_FILE    
+(      
+-- database name
+database_name string,      
+-- directory to be used, must be created beforehand
+directory_name string,               
+-- file name to be used
+file_name string,               
+-- choose if XSLT or XQuery should be used
+use_xslt boolean,                 
+-- table to be returned. If no argument is given, the default value is used
+table_name string default 'RETURN_ALL_TABLES'    
+)               
+AS
+-- variable for CLOB representation of the XML document
+xml_clob CLOB;           
+-- buffer for writing into the file
+buffer VARCHAR2(32767);  
+-- stores how many characters are read from the CLOB
+amount INTEGER;               
+-- offset for reading from the CLOB
+offset NUMBER;                
+-- exception in case the table name is invalid
+e_invalid_table EXCEPTION;     
+-- handle for writing into the file
+filehandle UTL_FILE.FILE_TYPE; 
+-- document to be written
+xml_document XMLType;             
+-- temporary variable for test if table name is valid
+temp_table_name varchar(255);               
+-- stores result of validity test
+table_ok boolean;                        
+-- cursor for all table names
+CURSOR name_cursor IS select table_name from tabs;    
+BEGIN            
+-- initialize validity variable
+table_ok:=FALSE;                            
+-- open cursor
+OPEN name_cursor;                           
+ -- start loop
+LOOP                                   
+ -- fetch table name
+ FETCH name_cursor INTO temp_table_name;
+-- loop ends when last table name is processed
+EXIT WHEN name_cursor%NOTFOUND;  
+ -- if the table name is valid...
+ if table_name=temp_table_name OR table_name='RETURN_ALL_TABLES'   
+  then     
+   -- ...store this result and exit loop
+   table_ok:=TRUE;    
+   EXIT;     
+ end if;     
+END LOOP;     
+-- close cursor
+CLOSE name_cursor;     
+-- if table name is invalid...
+if NOT table_ok              
+ -- ...raise corresponding exception
+ then RAISE e_invalid_table; 
+end if;     
+-- if XSLT should be used...
+if use_xslt   
+ -- create document with XSLT function
+ then xml_document:=METADATA_AS_OWL_WITH_XSLT(database_name,table_name); 
+ -- else use XQuery function
+ else xml_document:=METADATA_AS_OWL(database_name,table_name);   
+end if;     
+-- open file for writing
+filehandle:=UTL_FILE.FOPEN(directory_name,file_name,'W',32767);        
+-- amount to be read is the largest possible at the beginning
+amount := 32767;                                                   
+-- offset is at start of the file
+offset := 1;                                   
+-- the XML document is stored as CLOB
+xml_clob:=XMLType.getClobVal(xml_document);    
+-- while we read more than fits into the buffer...
+WHILE amount >= 32767                                      
+LOOP
+ -- read next part of the CLOB into the buffer
+ DBMS_LOB.READ(xml_clob, amount, offset,buffer); 
+ -- adjust offset 
+ offset := offset + amount;                         
+ -- write buffer into file
+ UTL_FILE.PUT(filehandle,buffer);                
+ -- flush buffer
+ UTL_FILE.FFLUSH(filehandle);                    
+END LOOP;
+-- close handle
+UTL_FILE.FCLOSE(filehandle);            
+-- exeception handling
+EXCEPTION              
+WHEN e_invalid_table THEN     
+ DBMS_OUTPUT.PUT_LINE('invalid table name');     
+WHEN UTL_FILE.ACCESS_DENIED THEN                
+ DBMS_OUTPUT.PUT_LINE('file access denied');     
+WHEN UTL_FILE.INVALID_FILENAME THEN                
+ DBMS_OUTPUT.PUT_LINE('invalid file name');          
+WHEN UTL_FILE.INVALID_PATH THEN                
+ DBMS_OUTPUT.PUT_LINE('invalid path');          
+WHEN UTL_FILE.WRITE_ERROR THEN                
+ DBMS_OUTPUT.PUT_LINE('error while writing into file');                         
+WHEN UTL_FILE.FILE_OPEN THEN                
+ DBMS_OUTPUT.PUT_LINE('file is already open');        
+-- all other exceptions are handled here
+WHEN OTHERS THEN                                            
+ DBMS_OUTPUT.PUT_LINE('unknown error');                                 
+END;   
+
+
+----------------------------------------------------------------------------------------------------
+
+
+
+CREATE OR REPLACE PROCEDURE EXTRACT_DATA_INTO_FILE
+(      
+-- location of schema ontology
+schema_url string,    
+-- directory to be used, must be created beforehand
+directory_name string,               
+-- file name to be used
+file_name string,               
+-- choose if XSLT or XQuery should be used
+use_xslt boolean,                 
+-- table to be returned. If no argument is given, the default value is used
+table_name string default 'RETURN_ALL_TABLES'    
+)               
+AS
+-- variable for CLOB representation of the XML document
+xml_clob CLOB;           
+-- buffer for writing into the file
+buffer VARCHAR2(32767);  
+-- stores how many characters are read from the CLOB
+amount INTEGER;               
+-- offset for reading from the CLOB
+offset NUMBER;                
+-- exception in case the table name is invalid
+e_invalid_table EXCEPTION;     
+-- handle for writing into the file
+filehandle UTL_FILE.FILE_TYPE; 
+-- document to be written
+xml_document XMLType;             
+-- temporary variable for test if table name is valid
+temp_table_name varchar(255);               
+-- stores result of validity test
+table_ok boolean;                        
+-- cursor for all table names
+CURSOR name_cursor IS select table_name from tabs;    
+BEGIN            
+-- initialize validity variable
+table_ok:=FALSE;                            
+-- open cursor
+OPEN name_cursor;                           
+ -- start loop
+LOOP                                   
+ -- fetch table name
+ FETCH name_cursor INTO temp_table_name;
+-- loop ends when last table name is processed
+EXIT WHEN name_cursor%NOTFOUND;  
+ -- if the table name is valid...
+ if table_name=temp_table_name OR table_name='RETURN_ALL_TABLES'   
+  then     
+   -- ...store this result and exit loop
+   table_ok:=TRUE;    
+   EXIT;     
+ end if;     
+END LOOP;     
+-- close cursor
+CLOSE name_cursor;     
+-- if table name is invalid...
+if NOT table_ok              
+ -- ...raise corresponding exception
+ then RAISE e_invalid_table; 
+end if;     
+-- if XSLT should be used...
+if use_xslt   
+ -- create document with XSLT function
+ then xml_document:=DATA_AS_OWL_WITH_XSLT(schema_url,table_name); 
+ -- else use XQuery function   
+ else xml_document:=DATA_AS_OWL(schema_url,table_name);  
+end if;     
+-- open file for writing
+filehandle:=UTL_FILE.FOPEN(directory_name,file_name,'W',32767);        
+-- amount to be read is the largest possible at the beginning
+amount := 32767;                                                   
+-- offset is at start of the file
+offset := 1;                                   
+-- the XML document is stored as CLOB
+xml_clob:=XMLType.getClobVal(xml_document);    
+-- while we read more than fits into the buffer...
+WHILE amount >= 32767                                      
+LOOP
+ -- read next part of the CLOB into the buffer
+ DBMS_LOB.READ(xml_clob, amount, offset,buffer); 
+ -- adjust offset 
+ offset := offset + amount;                         
+ -- write buffer into file
+ UTL_FILE.PUT(filehandle,buffer);                
+ -- flush buffer
+ UTL_FILE.FFLUSH(filehandle);                    
+END LOOP;
+-- close handle
+UTL_FILE.FCLOSE(filehandle);            
+-- exeception handling
+EXCEPTION              
+WHEN e_invalid_table THEN     
+ DBMS_OUTPUT.PUT_LINE('invalid table name');     
+WHEN UTL_FILE.ACCESS_DENIED THEN                
+ DBMS_OUTPUT.PUT_LINE('file access denied');     
+WHEN UTL_FILE.INVALID_FILENAME THEN                
+ DBMS_OUTPUT.PUT_LINE('invalid file name');          
+WHEN UTL_FILE.INVALID_PATH THEN                
+ DBMS_OUTPUT.PUT_LINE('invalid path');          
+WHEN UTL_FILE.WRITE_ERROR THEN                
+ DBMS_OUTPUT.PUT_LINE('error while writing into file');                         
+WHEN UTL_FILE.FILE_OPEN THEN                
+ DBMS_OUTPUT.PUT_LINE('file is already open');        
+-- all other exceptions are handled here
+WHEN OTHERS THEN                                            
+ DBMS_OUTPUT.PUT_LINE('unknown error');                                 
+END;   
+
